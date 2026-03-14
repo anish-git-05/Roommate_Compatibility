@@ -49,7 +49,6 @@ def train_and_evaluate(df_students, df_pairs):
 # ---------------------------------------------------------
 if __name__ == "__main__":
     pairs_merged = build_training_dataset("backend/data/students.csv")
-    
     # Separate students (for feature engineering) and pairs
     df_students = pd.read_csv("backend/data/students.csv")
     df_pairs = pairs_merged[['student_id_A', 'student_id_B', 'target_compatibility_score']].rename(

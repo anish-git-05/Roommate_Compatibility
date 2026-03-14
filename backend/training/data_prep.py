@@ -5,10 +5,7 @@ import random
 from itertools import combinations
 
 def calculate_compatibility(row):
-    score = 50
-
-    if row['gender_A'] != row['gender_B'] or row['year_of_study_A'] != row['year_of_study_B']:
-        return 0
+    score = 50  # Start with a neutral score
 
     s1, s2 = row['sleep_time_A'], row['sleep_time_B']
     sleep_diff = min(abs(s1 - s2), 24 - abs(s1 - s2))
@@ -64,14 +61,14 @@ def calculate_compatibility(row):
         score += 3
 
     if row['smoking_drinking_A'] != row['smoking_drinking_B']:
-        score -= 20
+        score -= 30
 
     nt1, nt2 = row['noise_tolerance_A'], row['noise_tolerance_B']
     np1, np2 = row['study_noise_preference_A'], row['study_noise_preference_B']
     if (nt1 <= 3 and np2 == 'cafe_noise') or (nt2 <= 3 and np1 == 'cafe_noise'):
         score -= 15
 
-    return max(0, min(100, score))
+    return max(-20, min(100, score))
 
 def build_training_dataset(csv_path):
     students_df = pd.read_csv(csv_path)

@@ -1,0 +1,11 @@
+1. For genrating optimal pair, call this api-
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/admin/run-matching" | ConvertTo-Json -Depth 6
+
+2. for start training, call
+python -m backend.training.train_model
+
+3. for starting the app
+uvicorn backend.main:app --reload
+
+4. Viewing the ui
+http://127.0.0.1:8000/app 

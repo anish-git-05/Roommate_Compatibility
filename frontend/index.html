@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Roommate Match Console</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <main class="screen">
+        <section class="glow glow-a" aria-hidden="true"></section>
+        <section class="glow glow-b" aria-hidden="true"></section>
+
+        <section class="app-shell">
+            <header class="hero">
+                <p class="tag">HOSTEL ALLOCATION</p>
+                <h1>Roommate Match Console</h1>
+                <p class="sub">Search any student ID to inspect roommate fit, matched traits, and mismatch hotspots visually.</p>
+            </header>
+
+            <section class="panel search-panel">
+                <h2>Student Search</h2>
+                <p class="panel-note">Enter a student ID to find their roommate assignment.</p>
+
+                <form class="search-row" action="/app" method="get">
+                    <label for="student_id">Student ID</label>
+                    <div class="search-controls">
+                        <input id="student_id" name="student_id" type="number" value="__INPUT_VALUE__" placeholder="Eg: 1054" required />
+                        <button type="submit">Find Match</button>
+                    </div>
+                </form>
+
+                __STATUS_BLOCK__
+            </section>
+
+            <section class="grid-two">
+                <article class="panel list-panel">
+                    <h3>What Matches</h3>
+                    <ul class="scroll-list">
+                        __MATCH_ITEMS__
+                    </ul>
+                </article>
+
+                <article class="panel list-panel">
+                    <h3>What Does Not Match</h3>
+                    <ul class="scroll-list">
+                        __MISMATCH_ITEMS__
+                    </ul>
+                </article>
+            </section>
+
+            <section class="panel one-vs-one">
+                <h3>1v1 Comparison Match</h3>
+                <p class="panel-note">Direct trait-by-trait comparison between selected student and roommate.</p>
+                <div class="ovr-grid">
+                    __ONE_VS_ONE_ROWS__
+                </div>
+            </section>
+
+            <section class="grid-two charts">
+                <article class="panel chart-panel">
+                    <h3>Profile Comparison (Radar)</h3>
+                    <div class="legend">
+                        <span><i class="swatch student"></i>Student</span>
+                        <span><i class="swatch mate"></i>Roommate</span>
+                    </div>
+                    <div class="radar-canvas">
+                        __RADAR_SVG__
+                    </div>
+                </article>
+
+                <article class="panel chart-panel">
+                    <h3>Mismatch Impact (Top Attributes)</h3>
+                    <div class="bar-grid">
+                        __IMPACT_ROWS__
+                    </div>
+                </article>
+            </section>
+        </section>
+    </main>
+</body>
+</html>

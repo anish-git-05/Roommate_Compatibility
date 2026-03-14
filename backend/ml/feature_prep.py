@@ -18,16 +18,13 @@ numerical_cols = [
 
 def create_pairwise_features(df_students, df_pairs):
     """Merges student profiles and computes absolute differences & similarities."""
-    
-    # Note: Make sure the suffixes here (_1 and _2) match what you use 
-    # in your calculate_compatibility function!
-    df = df_pairs.merge(df_students, left_on='student_id_A', right_on='student_id', suffixes=('', '_1'))
-    if 'student_id' in df.columns:
-        df = df.drop(columns=['student_id'])
-        
-    df = df.merge(df_students, left_on='student_id_B', right_on='student_id', suffixes=('_1', '_2'))
-    if 'student_id' in df.columns:
-        df = df.drop(columns=['student_id'])
+
+    # Build explicit A/B views so downstream feature code can rely on _A/_B names.
+    students_A = df_students.add_suffix('_A')
+    students_B = df_students.add_suffix('_B')
+
+    df = df_pairs.merge(students_A, on='student_id_A')
+    df = df.merge(students_B, on='student_id_B')
 
     features = pd.DataFrame()
     features['student_id_A'] = df['student_id_A']
@@ -35,11 +32,11 @@ def create_pairwise_features(df_students, df_pairs):
 
     # Numerical differences (Absolute difference)
     for col in numerical_cols:
-        features[f'diff_{col}'] = np.abs(df[f'{col}_1'] - df[f'{col}_2'])
+        features[f'diff_{col}'] = np.abs(df[f'{col}_A'] - df[f'{col}_B'])
 
     # Categorical similarities (1 if same, 0 if different)
     for col in categorical_cols:
-        features[f'sim_{col}'] = (df[f'{col}_1'] == df[f'{col}_2']).astype(int)
+        features[f'sim_{col}'] = (df[f'{col}_A'] == df[f'{col}_B']).astype(int)
 
     # Add target variable if it exists (for training phase)
     if 'compatibility_score' in df.columns:
