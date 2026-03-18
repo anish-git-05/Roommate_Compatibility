@@ -8,12 +8,15 @@ categorical_cols = [
     'relationship_status', 'career_interest', 'cult_sports', 'language'
 ]
 
+binary_cols = [
+    'alarm_usage', 'smoking_drinking', 'workout', 'gaming', 'anime'
+]
+
 numerical_cols = [
-    'year_of_study', 'sleep_time', 'wake_up_time', 'alarm_usage', 
-    'morning_productivity', 'night_productivity', 'cleanliness_score', 
-    'room_organization_level', 'noise_tolerance', 'daily_study_hours', 
-    'introvert_extrovert_score', 'smoking_drinking', 'workout', 
-    'gaming', 'anime', 'room_stay_duration'
+    'year_of_study', 'sleep_time', 'wake_up_time',
+    'morning_productivity', 'night_productivity', 'cleanliness_score',
+    'room_organization_level', 'noise_tolerance', 'daily_study_hours',
+    'introvert_extrovert_score', 'room_stay_duration'
 ]
 
 def create_pairwise_features(df_students, df_pairs):
@@ -34,8 +37,8 @@ def create_pairwise_features(df_students, df_pairs):
     for col in numerical_cols:
         features[f'diff_{col}'] = np.abs(df[f'{col}_A'] - df[f'{col}_B'])
 
-    # Categorical similarities (1 if same, 0 if different)
-    for col in categorical_cols:
+    # Categorical and binary similarities (1 if same, 0 if different)
+    for col in categorical_cols + binary_cols:
         features[f'sim_{col}'] = (df[f'{col}_A'] == df[f'{col}_B']).astype(int)
 
     # Add target variable if it exists (for training phase)

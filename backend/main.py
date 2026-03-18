@@ -42,7 +42,6 @@ if os.path.isdir(FRONTEND_DIR):
 NUMERIC_FIELDS = {
     "sleep_time",
     "wake_up_time",
-    "alarm_usage",
     "morning_productivity",
     "night_productivity",
     "cleanliness_score",
@@ -51,6 +50,10 @@ NUMERIC_FIELDS = {
     "daily_study_hours",
     "introvert_extrovert_score",
     "room_stay_duration",
+}
+
+BINARY_FIELDS = {
+    "alarm_usage",
     "smoking_drinking",
     "workout",
     "gaming",
@@ -205,6 +208,14 @@ def _build_comparison(student_row: pd.Series, roommate_row: pd.Series):
         label = DISPLAY_NAMES[field]
         student_value = student_row[field]
         mate_value = roommate_row[field]
+
+        if field in BINARY_FIELDS:
+            if int(student_value) == int(mate_value):
+                matches.append(f"{label}: same ({int(student_value)})")
+            else:
+                mismatches.append(f"{label}: different ({int(student_value)} vs {int(mate_value)})")
+                impacts.append((label, 8.0))
+            continue
 
         if field in NUMERIC_FIELDS:
             diff = abs(float(student_value) - float(mate_value))
