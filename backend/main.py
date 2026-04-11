@@ -39,7 +39,7 @@ if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend-static")
 
 
-NUMERIC_FIELDS = {
+NUMERIC_GRAPH_FIELDS = [
     "sleep_time",
     "wake_up_time",
     "morning_productivity",
@@ -50,21 +50,32 @@ NUMERIC_FIELDS = {
     "daily_study_hours",
     "introvert_extrovert_score",
     "room_stay_duration",
-}
+]
 
-BINARY_FIELDS = {
+NUMERIC_FIELDS = set(NUMERIC_GRAPH_FIELDS)
+
+BINARY_GRAPH_FIELDS = [
     "alarm_usage",
     "smoking_drinking",
     "workout",
     "gaming",
     "anime",
+]
+
+BINARY_FIELDS = set(BINARY_GRAPH_FIELDS)
+
+TIME_CYCLIC_FIELDS = {
+    "sleep_time",
+    "wake_up_time",
 }
 
 DISPLAY_NAMES = {
+    "gender": "Gender",
+    "year_of_study": "Year of Study",
     "department": "Department",
     "sleep_time": "Sleep Time",
     "wake_up_time": "Wake Up Time",
-    "alarm_usage": "Alarm Usage",
+    "alarm_usage": "Alarm Usage (Y/N)",
     "morning_productivity": "Morning Productivity",
     "night_productivity": "Night Productivity",
     "cleanliness_score": "Cleanliness Score",
@@ -73,16 +84,16 @@ DISPLAY_NAMES = {
     "study_noise_preference": "Study Noise Preference",
     "fan_or_cooler_preference": "Fan/Cooler Preference",
     "study_habit": "Study Habit",
-    "daily_study_hours": "Daily Study Hours",
+    "daily_study_hours": "Study Duration (Hours)",
     "food_preference": "Food Preference",
     "exam_preparation_style": "Exam Preparation Style",
     "introvert_extrovert_score": "Introvert Extrovert Score",
     "social_frequency": "Social Frequency",
     "relationship_status": "Relationship Status",
-    "smoking_drinking": "Smoking Drinking",
-    "workout": "Workout",
-    "gaming": "Gaming",
-    "anime": "Anime",
+    "smoking_drinking": "Smoking Drinking (Y/N)",
+    "workout": "Workout (Y/N)",
+    "gaming": "Gaming (Y/N)",
+    "anime": "Anime (Y/N)",
     "room_stay_duration": "Room Stay Duration",
     "career_interest": "Career Interest",
     "cult_sports": "Cult Sports",
@@ -90,6 +101,10 @@ DISPLAY_NAMES = {
 }
 
 COMPARISON_FIELDS = list(DISPLAY_NAMES.keys())
+
+OTHER_CATEGORICAL_FIELDS = [
+    field for field in COMPARISON_FIELDS if field not in NUMERIC_FIELDS and field not in BINARY_FIELDS
+]
 
 RADAR_FIELDS = [
     "wake_up_time",
@@ -211,9 +226,9 @@ def _build_comparison(student_row: pd.Series, roommate_row: pd.Series):
 
         if field in BINARY_FIELDS:
             if int(student_value) == int(mate_value):
-                matches.append(f"{label}: same ({int(student_value)})")
+                matches.append(f"{label}")
             else:
-                mismatches.append(f"{label}: different ({int(student_value)} vs {int(mate_value)})")
+                mismatches.append(f"{label}")
                 impacts.append((label, 8.0))
             continue
 
@@ -221,18 +236,18 @@ def _build_comparison(student_row: pd.Series, roommate_row: pd.Series):
             diff = abs(float(student_value) - float(mate_value))
             if diff <= 1:
                 matches.append(
-                    f"{label}: close values ({student_value} vs {mate_value}, diff {diff:.0f})"
+                    f"{label}"
                 )
             else:
                 mismatches.append(
-                    f"{label}: {student_value} vs {mate_value} (diff {diff:.0f})"
+                    f"{label}"
                 )
                 impacts.append((label, max(diff, 1.0)))
         else:
             if str(student_value) == str(mate_value):
-                matches.append(f"{label}: same ({student_value})")
+                matches.append(f"{label}")
             else:
-                mismatches.append(f"{label}: {student_value} vs {mate_value}")
+                mismatches.append(f"{label}")
                 impacts.append((label, 6.0))
 
     if not matches:
@@ -244,22 +259,114 @@ def _build_comparison(student_row: pd.Series, roommate_row: pd.Series):
     return matches, mismatches, impact_sorted
 
 
+def _binary_graph(student_row: pd.Series, roommate_row: pd.Series):
+    details = []
+    matched = 0
+
+    for field in BINARY_GRAPH_FIELDS:
+        left = int(student_row[field])
+        right = int(roommate_row[field])
+        is_match = left == right
+        if is_match:
+            matched += 1
+        details.append((DISPLAY_NAMES[field], left, right, is_match))
+
+    total = len(BINARY_GRAPH_FIELDS)
+    match_pct = 0 if total == 0 else int(round((matched / total) * 100))
+    mismatch_pct = 100 - match_pct
+
+    circumference = 2 * math.pi * 44
+    match_arc = circumference * (match_pct / 100)
+    mismatch_arc = max(circumference - match_arc, 0.0)
+
+    rows = []
+    for label, left, right, is_match in details:
+        state_class = "ok" if is_match else "bad"
+        rows.append(
+            '<div class="mini-row">'
+            f'<p>{escape(label)}</p>'
+            f'<span class="state {state_class}">{left} vs {right}</span>'
+            '</div>'
+        )
+
+    return (
+        '<div class="split-graph">'
+        '<svg viewBox="0 0 140 140" class="ring" role="img" aria-label="Binary feature match ratio">'
+        '<circle cx="70" cy="70" r="44" class="ring-bg" />'
+        f'<circle cx="70" cy="70" r="44" class="ring-match" style="stroke-dasharray: {match_arc:.2f} {circumference:.2f}" />'
+        f'<circle cx="70" cy="70" r="44" class="ring-miss" style="stroke-dasharray: {mismatch_arc:.2f} {circumference:.2f}; stroke-dashoffset: -{match_arc:.2f}" />'
+        f'<text x="70" y="66" class="ring-score">{match_pct}%</text>'
+        '<text x="70" y="82" class="ring-sub">match</text>'
+        '</svg>'
+        '<div class="split-meta">'
+        f'<p><strong>{matched}</strong> matched, <strong>{total - matched}</strong> mismatched</p>'
+        f'<p>Mismatch share: {mismatch_pct}%</p>'
+        '<div class="mini-grid">'
+        + "".join(rows)
+        + '</div></div></div>'
+    )
+
+
+def _numerical_graph(student_row: pd.Series, roommate_row: pd.Series, df_students: pd.DataFrame):
+    rows = []
+    graph_data = []
+
+    for field in NUMERIC_GRAPH_FIELDS:
+        left = float(student_row[field])
+        right = float(roommate_row[field])
+        raw_diff = abs(left - right)
+        if field in TIME_CYCLIC_FIELDS:
+            # Wrap clock values across midnight for realistic time distance.
+            diff = min(raw_diff, 24 - raw_diff)
+            ratio = min(diff / 12.0, 1.0)
+        else:
+            diff = raw_diff
+            range_span = float(df_students[field].max()) - float(df_students[field].min())
+            ratio = 0.0 if range_span == 0 else min(diff / range_span, 1.0)
+
+        graph_data.append((field, left, right, diff, ratio))
+
+    for field, left, right, diff, ratio in graph_data:
+        width = ratio * 100
+        rows.append(
+            '<div class="num-row">'
+            f'<p>{escape(DISPLAY_NAMES[field])}</p>'
+            '<div class="num-track">'
+            f'<span style="--w: {width:.0f}%"></span>'
+            '</div>'
+            f'<small>{left:g} vs {right:g} (diff {diff:g})</small>'
+            '</div>'
+        )
+
+    return '<div class="num-graph">' + "".join(rows) + '</div>'
+
+
+def _categorical_graph(student_row: pd.Series, roommate_row: pd.Series):
+    cards = []
+    matched = 0
+
+    for field in OTHER_CATEGORICAL_FIELDS:
+        left = str(student_row[field])
+        right = str(roommate_row[field])
+        is_match = left == right
+        if is_match:
+            matched += 1
+        state = "match" if is_match else "mismatch"
+        cards.append(
+            f'<div class="cat-card {state}">'
+            f'<h4>{escape(DISPLAY_NAMES[field])}</h4>'
+            f'<p>{escape(left)} vs {escape(right)}</p>'
+            '</div>'
+        )
+
+    total = len(OTHER_CATEGORICAL_FIELDS)
+    summary = f"{matched}/{total} categorical traits match"
+    return '<div class="cat-graph"><p class="cat-summary">' + escape(summary) + '</p><div class="cat-grid">' + "".join(cards) + '</div></div>'
+
+
 def _one_vs_one_rows(student_row: pd.Series, roommate_row: pd.Series, df_students: pd.DataFrame):
     rows = []
-    fields = [
-        "cleanliness_score",
-        "room_organization_level",
-        "daily_study_hours",
-        "introvert_extrovert_score",
-        "sleep_time",
-        "wake_up_time",
-        "noise_tolerance",
-        "room_stay_duration",
-        "smoking_drinking",
-        "workout",
-        "gaming",
-        "anime",
-    ]
+    fields = list(NUMERIC_GRAPH_FIELDS)
 
     for field in fields:
         minimum = float(df_students[field].min())
@@ -286,33 +393,49 @@ def _one_vs_one_rows(student_row: pd.Series, roommate_row: pd.Series, df_student
     return "".join(rows)
 
 
-def _render_app(student_id: int | None = None) -> str:
+def _render_app(student_id: int | None = None, searched: bool = False) -> str:
     template = _load_frontend_template()
 
-    default_status = (
-        '<div class="status placeholder">'
-        'No student selected yet. Enter an ID and click Find Match.'
-        '</div>'
-    )
+    default_status = ""
 
     replacements = {
-        "__INPUT_VALUE__": "" if student_id is None else str(student_id),
-        "__STATUS_BLOCK__": default_status,
-        "__MATCH_ITEMS__": '<li>No search yet.</li>',
-        "__MISMATCH_ITEMS__": '<li>No search yet.</li>',
-        "__ONE_VS_ONE_ROWS__": '<p class="panel-note">Search for a student to see 1v1 comparison bars.</p>',
-        "__RADAR_SVG__": '<p class="panel-note">Radar chart appears after a valid student search.</p>',
-        "__IMPACT_ROWS__": '<div class="bar-row"><p>No mismatch data yet.</p><span style="--w: 0%"></span></div>',
+        "__RESULTS_CLASS__": "hidden-presearch",
+        "<!--__STATUS_BLOCK__-->": default_status,
+        "<!--__MATCH_ITEMS__-->": '<li>No search yet.</li>',
+        "<!--__MISMATCH_ITEMS__-->": '<li>No search yet.</li>',
+        "<!--__ONE_VS_ONE_ROWS__-->": '<p class="panel-note">Search for a student to see 1v1 comparison bars.</p>',
+        "<!--__RADAR_SVG__-->": '<p class="panel-note">Radar chart appears after a valid student search.</p>',
+        "<!--__IMPACT_ROWS__-->": '<div class="bar-row"><p>No mismatch data yet.</p><span style="--w: 0%"></span></div>',
+        "<!--__NUMERIC_GRAPH__-->": '<p class="panel-note">Numerical comparison graph appears after search.</p>',
+        "<!--__BINARY_GRAPH__-->": '<p class="panel-note">Binary feature graph appears after search.</p>',
+        "<!--__CATEGORICAL_GRAPH__-->": '<p class="panel-note">Categorical comparison graph appears after search.</p>',
     }
 
+    if student_id is not None:
+        template = template.replace(
+            'id="student_id" name="student_id" type="number" placeholder="Eg: 1054" required',
+            f'id="student_id" name="student_id" type="number" value="{student_id}" placeholder="Eg: 1054" required'
+        )
+
+    if not searched:
+        html = template
+        for key, value in replacements.items():
+            html = html.replace(key, value)
+        return html
+
     if student_id is None:
+        replacements["<!--__STATUS_BLOCK__-->"] = (
+            '<div class="status error">'
+            'Please enter a valid student ID and search again.'
+            '</div>'
+        )
         html = template
         for key, value in replacements.items():
             html = html.replace(key, value)
         return html
 
     if not os.path.exists(STUDENTS_CSV_FILE):
-        replacements["__STATUS_BLOCK__"] = (
+        replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
             f"Data file missing at {escape(STUDENTS_CSV_FILE)}."
             '</div>'
@@ -326,7 +449,7 @@ def _render_app(student_id: int | None = None) -> str:
     student_data = df_students[df_students["student_id"] == student_id]
 
     if student_data.empty:
-        replacements["__STATUS_BLOCK__"] = (
+        replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
             f"Student ID {student_id} was not found in the CSV dataset."
             '</div>'
@@ -338,7 +461,7 @@ def _render_app(student_id: int | None = None) -> str:
 
     assignment = _assignment_for_student(student_id)
     if not assignment:
-        replacements["__STATUS_BLOCK__"] = (
+        replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
             'Assignments are not ready. Run POST /api/admin/run-matching first.'
             '</div>'
@@ -349,7 +472,7 @@ def _render_app(student_id: int | None = None) -> str:
         return html
 
     if assignment["roommate_id"] is None:
-        replacements["__STATUS_BLOCK__"] = (
+        replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
             f"Student ID: {student_id}<br/>"
             'No roommate assigned for this student yet.'
@@ -364,7 +487,7 @@ def _render_app(student_id: int | None = None) -> str:
     roommate_data = df_students[df_students["student_id"] == roommate_id]
 
     if roommate_data.empty:
-        replacements["__STATUS_BLOCK__"] = (
+        replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
             f"Roommate profile (ID {roommate_id}) not found in students.csv."
             '</div>'
@@ -379,18 +502,24 @@ def _render_app(student_id: int | None = None) -> str:
 
     matches, mismatches, impacts = _build_comparison(student_row, roommate_row)
 
-    replacements["__STATUS_BLOCK__"] = (
+    replacements["<!--__STATUS_BLOCK__-->"] = (
         '<div class="status ok">'
         f"Student ID: {student_id}<br/>"
         f"Roommate ID: {roommate_id}<br/>"
-        f"Compatibility: {assignment['compatibility_score']}"
+        f"Compatibility: {assignment['compatibility_score']}<br/>"
+        f"Gender: {escape(str(student_row['gender']))} vs {escape(str(roommate_row['gender']))}<br/>"
+        f"Year of Study: {escape(str(student_row['year_of_study']))} vs {escape(str(roommate_row['year_of_study']))}"
         '</div>'
     )
 
-    replacements["__MATCH_ITEMS__"] = "".join(f"<li>{escape(text)}</li>" for text in matches)
-    replacements["__MISMATCH_ITEMS__"] = "".join(f"<li>{escape(text)}</li>" for text in mismatches)
-    replacements["__ONE_VS_ONE_ROWS__"] = _one_vs_one_rows(student_row, roommate_row, df_students)
-    replacements["__RADAR_SVG__"] = _radar_svg(student_row, roommate_row, df_students)
+    replacements["<!--__MATCH_ITEMS__-->"] = "".join(f"<li>{escape(text)}</li>" for text in matches)
+    replacements["__RESULTS_CLASS__"] = ""
+    replacements["<!--__MISMATCH_ITEMS__-->"] = "".join(f"<li>{escape(text)}</li>" for text in mismatches)
+    replacements["<!--__ONE_VS_ONE_ROWS__-->"] = _one_vs_one_rows(student_row, roommate_row, df_students)
+    replacements["<!--__RADAR_SVG__-->"] = _radar_svg(student_row, roommate_row, df_students)
+    replacements["<!--__NUMERIC_GRAPH__-->"] = _numerical_graph(student_row, roommate_row, df_students)
+    replacements["<!--__BINARY_GRAPH__-->"] = _binary_graph(student_row, roommate_row)
+    replacements["<!--__CATEGORICAL_GRAPH__-->"] = _categorical_graph(student_row, roommate_row)
 
     if impacts:
         max_impact = max(score for _, score in impacts)
@@ -403,9 +532,9 @@ def _render_app(student_id: int | None = None) -> str:
                 f'<span style="--w: {width:.0f}%"></span>'
                 '</div>'
             )
-        replacements["__IMPACT_ROWS__"] = "".join(rows)
+        replacements["<!--__IMPACT_ROWS__-->"] = "".join(rows)
     else:
-        replacements["__IMPACT_ROWS__"] = '<div class="bar-row"><p>No mismatch data.</p><span style="--w: 0%"></span></div>'
+        replacements["<!--__IMPACT_ROWS__-->"] = '<div class="bar-row"><p>No mismatch data.</p><span style="--w: 0%"></span></div>'
 
     html = template
     for key, value in replacements.items():
@@ -419,8 +548,11 @@ def read_root():
 
 
 @app.get("/app", response_class=HTMLResponse)
-def serve_frontend(student_id: int | None = Query(default=None)):
-    return HTMLResponse(content=_render_app(student_id))
+def serve_frontend(
+    student_id: int | None = Query(default=None),
+    searched: int | None = Query(default=None)
+):
+    return HTMLResponse(content=_render_app(student_id, searched=bool(searched)))
 
 
 # 2. ADMIN ENDPOINT: Trigger the matching process from the local CSV
