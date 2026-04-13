@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Roommate Match Console</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260318-graphfix1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260413-feedback-ui" />
 </head>
 <body>
     <main class="screen">
@@ -33,6 +33,10 @@
 
                 <!--__STATUS_BLOCK__-->
             </section>
+
+            <!--__ADMIN_ACTIONS__-->
+
+            <!--__REVIEW_PANEL__-->
 
             <section class="results-wrap __RESULTS_CLASS__">
                 <section class="grid-two">
@@ -98,5 +102,42 @@
             </section>
         </section>
     </main>
+    <script>
+        const feedbackForm = document.getElementById('feedback-form');
+        const feedbackStatus = document.getElementById('feedback-status');
+        if (feedbackForm && feedbackStatus) {
+            feedbackForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const payload = {
+                    user_id: Number(feedbackForm.dataset.userId),
+                    roommate_id: Number(feedbackForm.dataset.roommateId),
+                    feedback_score: Number(document.getElementById('feedback_score').value),
+                };
+
+                feedbackStatus.className = 'status placeholder';
+                feedbackStatus.textContent = 'Submitting review...';
+
+                try {
+                    const response = await fetch('/feedback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to submit feedback.');
+                    }
+
+                    feedbackStatus.className = 'status ok';
+                    feedbackStatus.textContent = 'Review submitted successfully. Reloading to lock the form...';
+                    window.setTimeout(() => window.location.reload(), 900);
+                } catch (error) {
+                    feedbackStatus.className = 'status error';
+                    feedbackStatus.textContent = error.message;
+                }
+            });
+        }
+
+    </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 # backend/ml/feature_prep.py
 import pandas as pd
 import numpy as np
+from backend.training.data_prep import calculate_compatibility
 
 categorical_cols = [
     'gender', 'department', 'study_noise_preference', 'fan_or_cooler_preference',
@@ -19,8 +20,8 @@ numerical_cols = [
     'introvert_extrovert_score', 'room_stay_duration'
 ]
 
-def create_pairwise_features(df_students, df_pairs):
-    """Merges student profiles and computes absolute differences & similarities."""
+def create_pairwise_features(df_students, df_pairs, is_training=False):
+    """Build pairwise features for prediction or training target generation."""
 
     # Build explicit A/B views so downstream feature code can rely on _A/_B names.
     students_A = df_students.add_suffix('_A')
@@ -41,8 +42,11 @@ def create_pairwise_features(df_students, df_pairs):
     for col in categorical_cols + binary_cols:
         features[f'sim_{col}'] = (df[f'{col}_A'] == df[f'{col}_B']).astype(int)
 
-    # Add target variable if it exists (for training phase)
-    if 'compatibility_score' in df.columns:
-        features['compatibility_score'] = df['compatibility_score']
+    if is_training:
+        if 'compatibility_score' in df.columns:
+            features['compatibility_score'] = df['compatibility_score'].astype(float)
+        else:
+            # Fallback synthetic target when explicit feedback/target is not provided.
+            features['compatibility_score'] = df.apply(calculate_compatibility, axis=1).astype(float)
 
     return features

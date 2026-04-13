@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,10 +8,26 @@ import json
 import os
 from html import escape
 import math
+from sqlalchemy.orm import Session
 
 # Import your ML pipeline modules
-from backend.ml.matching import find_optimal_roommates
+from backend.ml.matching import (
+    find_optimal_roommates,
+    persist_matching_results,
+
+)
 from backend.ml.model_loader import get_model
+from backend.database import get_db, init_db, SessionLocal
+from backend.models import FeedbackStaging, User
+from backend.schemas import BatchJobResult, FeedbackCreate, FeedbackResponse
+from backend.scheduler import start_scheduler, stop_scheduler
+from backend.services.retraining import (
+    get_current_assignment_record,
+    get_feedback_for_cycle,
+    get_active_students_csv,
+    run_feedback_batch_job,
+    sync_users_from_dataframe,
+)
 
 app = FastAPI(title="Hostel Roommate Matching System")
 
@@ -32,11 +48,37 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 # The static paths for your input and output files
-STUDENTS_CSV_FILE = os.path.join(DATA_DIR, "students.csv")
+STUDENTS_CSV_FILE = os.path.join(PROJECT_ROOT, "backend/training/data/students.csv")
+PREDICT_CSV_FILE = os.path.join(DATA_DIR, "predict_data.csv")
 ASSIGNMENTS_FILE = os.path.join(DATA_DIR, "assignments.json")
+
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend-static")
+
+
+@app.on_event("startup")
+async def ensure_model_ready_on_startup():
+    """Initialize persistence, users, model, and scheduler when the API starts."""
+    init_db()
+
+    try:
+        df_students = pd.read_csv(get_active_students_csv())
+        with SessionLocal() as db:
+            sync_users_from_dataframe(db, df_students)
+            db.commit()
+    except Exception as exc:
+        print(f"User bootstrap skipped: {exc}")
+
+    print("Initializing ML model on startup...")
+    get_model()
+    print("ML model is ready.")
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    stop_scheduler()
 
 
 NUMERIC_GRAPH_FIELDS = [
@@ -127,6 +169,18 @@ def _load_frontend_template() -> str:
 
 
 def _assignment_for_student(student_id: int):
+    with SessionLocal() as db:
+        record = get_current_assignment_record(db, student_id)
+        if record:
+            return {
+                "your_id": student_id,
+                "roommate_id": record.roommate_id,
+                "compatibility_score": record.compatibility_score,
+                "source": record.source,
+                "matching_cycle": record.matching_cycle,
+                "message": "No roommate assigned" if record.roommate_id is None else None,
+            }
+
     if not os.path.exists(ASSIGNMENTS_FILE):
         return None
 
@@ -139,6 +193,8 @@ def _assignment_for_student(student_id: int):
                 "your_id": student_id,
                 "roommate_id": pair.get("student_2"),
                 "compatibility_score": pair.get("compatibility_score"),
+                "source": "json_fallback",
+                "matching_cycle": data.get("matching_cycle"),
                 "message": pair.get("message"),
             }
         if pair.get("student_2") == student_id:
@@ -146,10 +202,74 @@ def _assignment_for_student(student_id: int):
                 "your_id": student_id,
                 "roommate_id": pair.get("student_1"),
                 "compatibility_score": pair.get("compatibility_score"),
+                "source": "json_fallback",
+                "matching_cycle": data.get("matching_cycle"),
                 "message": pair.get("message"),
             }
 
     return None
+
+
+def _review_panel_html(student_id: int, assignment: dict) -> str:
+    roommate_id = assignment.get("roommate_id")
+    matching_cycle = assignment.get("matching_cycle")
+
+    if assignment.get("source") == "json_fallback" or matching_cycle is None:
+        return (
+            '<article class="panel review-panel">'
+            '<h3>Roommate Review</h3>'
+            '<p class="panel-note">Feedback is enabled only for DB-saved assignments.</p>'
+            '<div class="status error">'
+            'Assignment exists in JSON only. Run matching once from backend/API so feedback can be validated and stored by cycle.'
+            '</div>'
+            '</article>'
+        )
+
+    if roommate_id is None:
+        return (
+            '<article class="panel review-panel">'
+            '<h3>Roommate Review</h3>'
+            '<p class="panel-note">Feedback is available only when a roommate is assigned.</p>'
+            '</article>'
+        )
+
+    existing_feedback = None
+    with SessionLocal() as db:
+        existing_feedback = get_feedback_for_cycle(
+            db,
+            user_id=student_id,
+            roommate_id=int(roommate_id),
+            matching_cycle=int(matching_cycle),
+        )
+
+    if existing_feedback:
+        return (
+            '<article class="panel review-panel">'
+            '<h3>Roommate Review</h3>'
+            '<div class="status ok">'
+            'Review already submitted for this roommate match.<br/>'
+            f'Your score: {existing_feedback.feedback_score}<br/>'
+            'This review is already stored for batch retraining.'
+            '</div>'
+            '</article>'
+        )
+
+    return (
+        '<article class="panel review-panel">'
+        '<h3>Roommate Review</h3>'
+        '<p class="panel-note">You can review this roommate once. The feedback will be used later in batch retraining.</p>'
+        '<div id="feedback-status" class="status placeholder">No review submitted yet for this roommate match.</div>'
+        '<form id="feedback-form" class="review-form" '
+        f'data-user-id="{student_id}" data-roommate-id="{roommate_id}" data-matching-cycle="{matching_cycle}">'
+        '<label for="feedback_score">Compatibility review score</label>'
+        '<div class="review-controls">'
+        '<input id="feedback_score" name="feedback_score" type="number" min="0" max="100" step="1" placeholder="0 to 100" required />'
+        '<button type="submit">Submit Review</button>'
+        '</div>'
+        '<p class="panel-note compact">Once submitted, this review stays locked and will wait in the staging queue until you run batch retraining.</p>'
+        '</form>'
+        '</article>'
+    )
 
 
 def _normalize_for_radar(df: pd.DataFrame, field: str, value):
@@ -395,12 +515,15 @@ def _one_vs_one_rows(student_row: pd.Series, roommate_row: pd.Series, df_student
 
 def _render_app(student_id: int | None = None, searched: bool = False) -> str:
     template = _load_frontend_template()
+    students_csv_file = get_active_students_csv()
 
     default_status = ""
 
     replacements = {
         "__RESULTS_CLASS__": "hidden-presearch",
         "<!--__STATUS_BLOCK__-->": default_status,
+        "<!--__ADMIN_ACTIONS__-->": "",
+        "<!--__REVIEW_PANEL__-->": '<article class="panel review-panel"><h3>Roommate Review</h3><p class="panel-note">Search for a student to view or submit feedback.</p></article>',
         "<!--__MATCH_ITEMS__-->": '<li>No search yet.</li>',
         "<!--__MISMATCH_ITEMS__-->": '<li>No search yet.</li>',
         "<!--__ONE_VS_ONE_ROWS__-->": '<p class="panel-note">Search for a student to see 1v1 comparison bars.</p>',
@@ -434,10 +557,10 @@ def _render_app(student_id: int | None = None, searched: bool = False) -> str:
             html = html.replace(key, value)
         return html
 
-    if not os.path.exists(STUDENTS_CSV_FILE):
+    if not os.path.exists(students_csv_file):
         replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
-            f"Data file missing at {escape(STUDENTS_CSV_FILE)}."
+            f"Data file missing at {escape(students_csv_file)}."
             '</div>'
         )
         html = template
@@ -445,7 +568,7 @@ def _render_app(student_id: int | None = None, searched: bool = False) -> str:
             html = html.replace(key, value)
         return html
 
-    df_students = pd.read_csv(STUDENTS_CSV_FILE)
+    df_students = pd.read_csv(students_csv_file)
     student_data = df_students[df_students["student_id"] == student_id]
 
     if student_data.empty:
@@ -463,7 +586,7 @@ def _render_app(student_id: int | None = None, searched: bool = False) -> str:
     if not assignment:
         replacements["<!--__STATUS_BLOCK__-->"] = (
             '<div class="status error">'
-            'Assignments are not ready. Run POST /api/admin/run-matching first.'
+            'Assignments are not ready yet. Run backend flow POST /api/admin/test-feedback-retrain (or POST /api/admin/run-matching) from API/admin side.'
             '</div>'
         )
         html = template
@@ -478,6 +601,7 @@ def _render_app(student_id: int | None = None, searched: bool = False) -> str:
             'No roommate assigned for this student yet.'
             '</div>'
         )
+        replacements["<!--__REVIEW_PANEL__-->"] = _review_panel_html(student_id, assignment)
         html = template
         for key, value in replacements.items():
             html = html.replace(key, value)
@@ -512,6 +636,7 @@ def _render_app(student_id: int | None = None, searched: bool = False) -> str:
         '</div>'
     )
 
+    replacements["<!--__REVIEW_PANEL__-->"] = _review_panel_html(student_id, assignment)
     replacements["<!--__MATCH_ITEMS__-->"] = "".join(f"<li>{escape(text)}</li>" for text in matches)
     replacements["__RESULTS_CLASS__"] = ""
     replacements["<!--__MISMATCH_ITEMS__-->"] = "".join(f"<li>{escape(text)}</li>" for text in mismatches)
@@ -558,16 +683,21 @@ def serve_frontend(
 # 2. ADMIN ENDPOINT: Trigger the matching process from the local CSV
 @app.post("/api/admin/run-matching")
 async def run_matching():
+    students_csv_file = get_active_students_csv()
+
     # Verify you actually placed the file in the right spot before running
-    if not os.path.exists(STUDENTS_CSV_FILE):
+    if not os.path.exists(students_csv_file):
         raise HTTPException(
             status_code=404, 
-            detail=f"Data file not found. Please place 'students.csv' inside {DATA_DIR}."
+            detail=(
+                "Data file not found. Place 'predict_data.csv' (preferred) or "
+                f"'students.csv' inside {DATA_DIR}."
+            )
         )
     
     try:
-        print(f"Reading student data from {STUDENTS_CSV_FILE}...")
-        df_students = pd.read_csv(STUDENTS_CSV_FILE)
+        print(f"Reading student data from {students_csv_file}...")
+        df_students = pd.read_csv(students_csv_file)
         
         # Load the trained model using your Singleton loader
         model = get_model()
@@ -575,17 +705,18 @@ async def run_matching():
         # Run the matching algorithm
         print("Starting the NetworkX matching pipeline...")
         matching_results = find_optimal_roommates(df_students, model)
-        
-        # Save the results to a JSON file for fast student lookups
-        with open(ASSIGNMENTS_FILE, "w") as f:
-            json.dump(matching_results, f, indent=4)
+
+        with SessionLocal() as db:
+            sync_users_from_dataframe(db, df_students)
+            persistence_result = persist_matching_results(db, matching_results, source="manual_matching")
+            db.commit()
             
         return {
             "message": "Roommate matching completed successfully!",
             "summary": {
                 "total_pairs": matching_results["total_pairs"],
-                "average_hostel_score": matching_results["average_hostel_score"]
-            }
+                "average_hostel_score": matching_results["average_hostel_score"],
+            },
         }
         
     except Exception as e:
@@ -595,6 +726,16 @@ async def run_matching():
 # 3. STUDENT ENDPOINT: Search for assigned roommate
 @app.get("/api/student/match/{student_id}")
 async def get_roommate(student_id: int):
+    with SessionLocal() as db:
+        stored_match = get_current_assignment_record(db, student_id)
+        if stored_match:
+            return {
+                "your_id": student_id,
+                "roommate_id": stored_match.roommate_id,
+                "compatibility_score": stored_match.compatibility_score,
+                "source": stored_match.source,
+            }
+
     # Check if the admin has run the matching yet
     if not os.path.exists(ASSIGNMENTS_FILE):
         raise HTTPException(
@@ -616,3 +757,144 @@ async def get_roommate(student_id: int):
             
     # If the loop finishes without returning, the student ID wasn't found
     raise HTTPException(status_code=404, detail=f"No roommate assignment found for student ID {student_id}.")
+
+
+@app.post("/feedback", response_model=FeedbackResponse, status_code=201)
+async def submit_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)):
+    if payload.user_id == payload.roommate_id:
+        raise HTTPException(status_code=400, detail="user_id and roommate_id must be different.")
+
+    users = db.query(User).filter(User.id.in_([payload.user_id, payload.roommate_id])).all()
+    found_ids = {user.id for user in users}
+    missing_ids = [user_id for user_id in [payload.user_id, payload.roommate_id] if user_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown user IDs in feedback payload: {missing_ids}",
+        )
+
+    current_assignment = get_current_assignment_record(db, payload.user_id)
+    if current_assignment is None:
+        raise HTTPException(status_code=404, detail="No active roommate assignment found for this user.")
+    if current_assignment.roommate_id != payload.roommate_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Feedback can be submitted only for the user's currently assigned roommate.",
+        )
+
+    active_cycle = int(current_assignment.matching_cycle)
+
+    existing_feedback = get_feedback_for_cycle(
+        db,
+        user_id=payload.user_id,
+        roommate_id=payload.roommate_id,
+        matching_cycle=active_cycle,
+    )
+    if existing_feedback:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Feedback already submitted for this roommate match."
+            ),
+        )
+
+    feedback = FeedbackStaging(
+        user_id=payload.user_id,
+        roommate_id=payload.roommate_id,
+        matching_cycle=active_cycle,
+        feedback_score=payload.feedback_score,
+    )
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+    return feedback
+
+
+@app.post("/api/admin/run-feedback-batch", response_model=BatchJobResult)
+async def run_feedback_batch(db: Session = Depends(get_db)):
+    try:
+        return run_feedback_batch_job(db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Batch retraining failed: {exc}") from exc
+
+
+@app.post("/api/admin/test-feedback-retrain")
+async def test_feedback_retrain(
+    seed_feedback_count: int = Query(default=20, ge=1, le=500),
+):
+    """Backend-only QA helper: run matching, seed one-time feedback, then run batch retraining."""
+    students_csv_file = get_active_students_csv()
+    if not os.path.exists(students_csv_file):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Student data file not found at {students_csv_file}",
+        )
+
+    try:
+        df_students = pd.read_csv(students_csv_file)
+        model = get_model()
+        matching_results = find_optimal_roommates(df_students, model)
+
+        with SessionLocal() as db:
+            sync_users_from_dataframe(db, df_students)
+            persistence_result = persist_matching_results(
+                db,
+                matching_results,
+                source="test_seed_matching",
+            )
+            db.commit()
+
+            active_cycle = int(persistence_result["matching_cycle"])
+            seeded_count = 0
+
+            for assignment in matching_results.get("assignments", []):
+                if seeded_count >= seed_feedback_count:
+                    break
+
+                roommate_id = assignment.get("student_2")
+                if roommate_id is None:
+                    continue
+
+                user_id = int(assignment["student_1"])
+                roommate_id = int(roommate_id)
+
+                existing_feedback = get_feedback_for_cycle(
+                    db,
+                    user_id=user_id,
+                    roommate_id=roommate_id,
+                    matching_cycle=active_cycle,
+                )
+                if existing_feedback:
+                    continue
+
+                compatibility_score = assignment.get("compatibility_score")
+                score_value = 75.0 if compatibility_score is None else float(compatibility_score)
+                score_value = max(0.0, min(100.0, score_value))
+
+                db.add(
+                    FeedbackStaging(
+                        user_id=user_id,
+                        roommate_id=roommate_id,
+                        matching_cycle=active_cycle,
+                        feedback_score=score_value,
+                    )
+                )
+                seeded_count += 1
+
+            db.commit()
+            batch_result = run_feedback_batch_job(db)
+
+            return {
+                "message": "Test retraining flow executed.",
+                "seed_feedback_count": seeded_count,
+                "seed_target": seed_feedback_count,
+                "seed_cycle": active_cycle,
+                "matching_summary": {
+                    "total_pairs": matching_results.get("total_pairs"),
+                    "average_hostel_score": matching_results.get("average_hostel_score"),
+                },
+                "batch_result": batch_result,
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Test retrain flow failed: {exc}") from exc

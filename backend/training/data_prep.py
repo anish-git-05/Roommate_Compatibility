@@ -73,7 +73,6 @@ def calculate_compatibility(row):
 def build_training_dataset(csv_path):
     students_df = pd.read_csv(csv_path)
     pairs_list = []
-    
     # 1. Generate sampled pairs for training
     grouped = students_df.groupby(['gender', 'year_of_study'])
     for _, group in grouped:
@@ -82,17 +81,8 @@ def build_training_dataset(csv_path):
         n_samples = min(3750, len(group_pairs))
         sampled_pairs = random.sample(group_pairs, n_samples)
         pairs_list.extend(sampled_pairs)
-
     pairs_df = pd.DataFrame(pairs_list, columns=['student_id_A', 'student_id_B'])
-
-    # 2. Merge features - suffix student columns upfront to avoid collision
-    students_A = students_df.add_suffix('_A')  # student_id_A, gender_A, ...
-    students_B = students_df.add_suffix('_B')  # student_id_B, gender_B, ...
-
-    merged_1 = pairs_df.merge(students_A, on='student_id_A')
-    pairs_merged = merged_1.merge(students_B, on='student_id_B')
-
-    # 3. Apply your heuristic to create the target variable (y)
-    pairs_merged['target_compatibility_score'] = pairs_merged.apply(calculate_compatibility, axis=1)
-
-    return pairs_merged
+    # Feature engineering + target generation now happens in ml/feature_prep.py
+    # so this function only prepares candidate training pairs.
+    return pairs_df
+    return pairs_df

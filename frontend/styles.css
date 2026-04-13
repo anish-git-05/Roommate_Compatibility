@@ -103,6 +103,12 @@ h1 {
     padding: 24px 24px 20px;
 }
 
+.action-panel,
+.review-panel {
+    margin-top: 16px;
+    padding: 18px 20px;
+}
+
 h2,
 h3 {
     margin: 0;
@@ -167,6 +173,67 @@ h3 {
 
 .search-controls button:hover {
     filter: brightness(1.04);
+}
+
+.admin-actions,
+.review-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.action-btn,
+.review-controls button {
+    height: 48px;
+    border: 1px solid #cc6f34;
+    border-radius: 14px;
+    padding: 0 22px;
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 800;
+    background: linear-gradient(140deg, #dd8a4f 0%, #cb6a2d 100%);
+    cursor: pointer;
+}
+
+.action-btn.secondary {
+    border-color: #2b7e87;
+    background: linear-gradient(140deg, #48aab3 0%, #287d86 100%);
+}
+
+.action-btn:disabled,
+.review-controls button:disabled {
+    cursor: wait;
+    opacity: 0.75;
+}
+
+.review-form label {
+    display: block;
+    margin-bottom: 8px;
+    color: #6f7c87;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.review-controls input {
+    flex: 1 1 220px;
+    height: 48px;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    padding: 0 14px;
+    font-size: 1rem;
+    color: #49535b;
+    background: #fff;
+}
+
+.review-controls input:focus {
+    outline: 3px solid rgba(34, 139, 148, 0.14);
+    border-color: #7aa9ac;
+}
+
+.compact {
+    margin-top: 12px;
+    margin-bottom: 0;
 }
 
 .status {
@@ -699,6 +766,18 @@ h3 {
     }
 
     .search-controls button {
+        width: 100%;
+    }
+
+    .admin-actions,
+    .review-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .action-btn,
+    .review-controls button,
+    .review-controls input {
         width: 100%;
     }
 

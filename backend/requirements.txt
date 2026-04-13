@@ -5,3 +5,5 @@ numpy
 networkx
 scikit-learn
 joblib
+sqlalchemy
+apscheduler
